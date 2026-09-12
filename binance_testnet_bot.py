@@ -5,6 +5,7 @@ import os
 import numpy as np
 import requests
 from datetime import datetime
+import pytz
 
 # ==========================================
 # TIMED-OUT GRID TRADING + TRAILING PROFIT + KILL SWITCH
@@ -26,6 +27,12 @@ GRID_STOP_LOSS_PCT = 0.015
 DAILY_LOSS_LIMIT_PCT = 0.15 # Stop trading if we lose 15% today
 
 STATE_FILE = 'binance_testnet_state.json'
+startup_logged = False
+import logging
+import csv
+from io import StringIO
+import os
+
 API_KEY = '55zZJTiycSGGtzfcVVCDHzn2cqFRx1SVzpb3WAWkKLHuccRsT56ERe75awTcfWIM' # Get from testnet.binancefuture.com
 SECRET_KEY = 'WyGFiNAqlEQamT7ttsN9CQuioPo4yH9AkGW2gOZ9av56mPw5L82FTtCZt29j4GXH'
 
@@ -117,7 +124,27 @@ def fetch_data(exchange):
         print(f"Data fetch error: {e}")
         return None
 
-def execute_market_order(exchange, side, amount, reason="", pnl_str=""):
+
+def log_trade_to_csv(side, amount, real_time_equity, reason, pnl_str):
+    file_exists = os.path.isfile('trade_history.csv')
+    with open('trade_history.csv', 'a', newline='') as csvfile:
+        fieldnames = ['timestamp', 'side', 'amount', 'real_time_equity', 'reason', 'pnl']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({
+            'timestamp': datetime.now(pytz.timezone('Asia/Kolkata')).isoformat(),
+            'side': side,
+            'amount': amount,
+            'real_time_equity': real_time_equity,
+            'reason': reason,
+            'pnl': pnl_str
+        })
+
+def execute_market_order(exchange, side, amount, real_time_equity, reason="", pnl_str=""):
+
     if DRY_RUN:
         print(f"[{reason}] 🧪 DRY RUN: Would execute MARKET {side.upper()} for {amount} BTC")
         return True
@@ -133,6 +160,12 @@ def execute_market_order(exchange, side, amount, reason="", pnl_str=""):
         msg = f"{icon} *{reason} EXECUTED*\nPair: {SYMBOL}\nAction: MARKET {side.upper()}\nAmount: {amount} BTC"
         if pnl_str: msg += f"\n{pnl_str}"
         
+        msg += f"\n💰 Current Capital: ${real_time_equity:.2f}"
+
+
+        log_trade_to_csv(side, amount, real_time_equity, reason, pnl_str)
+
+
         send_telegram_message(msg)
         print(f"[{reason}] ✅ LIVE ORDER EXECUTED! Placed MARKET {side.upper()} for {amount} BTC. Order ID: {order['id']}")
         return True
@@ -141,11 +174,22 @@ def execute_market_order(exchange, side, amount, reason="", pnl_str=""):
         send_telegram_message(f"❌ *ORDER FAILED*\nReason: {reason}\nError: {e}")
         return False
 
+
+
 def check_logic(exchange, df):
     state = load_state()
     current_price = df.iloc[-1]['close']
     now = datetime.now()
+    now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
     
+    total_margin_locked = sum( (data['amount'] * level / LEVERAGE) for level, data in state['open_grids'].items() if data['amount'] > 0)
+    total_unrealized_pnl = sum( (data['amount'] * current_price) - (data['amount'] * level) for level, data in state['open_grids'].items() if data['amount'] > 0)
+    real_time_equity = state['simulated_balance_usdt'] + total_margin_locked + total_unrealized_pnl
+
+    global startup_logged
+    if not startup_logged:
+        send_telegram_message(f"🚀 Bot Started!\n💰 Current Capital: ${real_time_equity:.2f}")
+        startup_logged = True
     if not DRY_RUN:
         try:
             balance_data = exchange.fetch_balance()
@@ -154,9 +198,11 @@ def check_logic(exchange, df):
         except Exception as e:
             print(f"Warning: Could not fetch live balance from Testnet: {e}")
 
-    if now.day != state['last_run_day']:
+    if now_ist.day != state['last_run_day']:
+        daily_pnl = real_time_equity - state['daily_start_balance']
+        send_telegram_message(f"🌅 New Day (IST)!\n💰 Current Capital: ${real_time_equity:.2f}\n📊 Yesterday PNL: ${daily_pnl:.2f}")
         print(f"🌅 New Day Rollover! Resetting Kill Switch and updating Daily Balance.")
-        state['last_run_day'] = now.day
+        state['last_run_day'] = now_ist.day
         state['kill_switch_active'] = False
         
         total_margin_locked = sum( (data['amount'] * level / LEVERAGE) for level, data in state['open_grids'].items() if data['amount'] > 0)
@@ -221,7 +267,7 @@ def check_logic(exchange, df):
                 gross_profit = sell_value_usd - buy_value_usd
                 net_profit = gross_profit - fee - (buy_value_usd * FEE_RATE)
                 
-                success = execute_market_order(exchange, 'sell', btc_to_sell, "KILL SWITCH", f"Estimated Net PnL: ${net_profit:.2f}")
+                success = execute_market_order(exchange, 'sell', btc_to_sell, real_time_equity, "KILL SWITCH", f"Estimated Net PnL: ${net_profit:.2f}")
                 
                 if success:
                     fee = sell_value_usd * FEE_RATE
@@ -257,7 +303,7 @@ def check_logic(exchange, df):
                 gross_profit = sell_value_usd - buy_value_usd
                 net_profit = gross_profit - fee - (buy_value_usd * FEE_RATE)
                 
-                success = execute_market_order(exchange, 'sell', btc_to_sell, "HARD STOP", f"Estimated Net Loss: ${net_profit:.2f}")
+                success = execute_market_order(exchange, 'sell', btc_to_sell, real_time_equity, "HARD STOP", f"Estimated Net Loss: ${net_profit:.2f}")
                 
                 if success:
                     fee = sell_value_usd * FEE_RATE
@@ -286,7 +332,7 @@ def check_logic(exchange, df):
                 gross_profit = sell_value_usd - buy_value_usd
                 net_profit = gross_profit - fee - (buy_value_usd * FEE_RATE)
                 
-                success = execute_market_order(exchange, 'sell', btc_to_sell, "TIMEOUT", f"Estimated Net PnL: ${net_profit:.2f}")
+                success = execute_market_order(exchange, 'sell', btc_to_sell, real_time_equity, "TIMEOUT", f"Estimated Net PnL: ${net_profit:.2f}")
                 
                 if success:
                     fee = sell_value_usd * FEE_RATE
@@ -319,7 +365,7 @@ def check_logic(exchange, df):
                 gross_profit = sell_value_usd - buy_value_usd
                 net_profit = gross_profit - fee - (buy_value_usd * FEE_RATE)
                 
-                success = execute_market_order(exchange, 'sell', btc_to_sell, "TAKE PROFIT", f"Estimated Net Profit: ${net_profit:.2f}")
+                success = execute_market_order(exchange, 'sell', btc_to_sell, real_time_equity, "TAKE PROFIT", f"Estimated Net Profit: ${net_profit:.2f}")
                 
                 if success:
                     fee = sell_value_usd * FEE_RATE
@@ -345,7 +391,7 @@ def check_logic(exchange, df):
             if btc_to_buy >= 0.001: 
                 print(f"📉 Price dropped to Grid Line ${lower_line:.2f} -> BUYING {btc_to_buy} BTC")
                 
-                success = execute_market_order(exchange, 'buy', btc_to_buy, "GRID ENTRY")
+                success = execute_market_order(exchange, 'buy', btc_to_buy, real_time_equity, "GRID ENTRY")
                 
                 if success:
                     fee = position_size_usd * FEE_RATE

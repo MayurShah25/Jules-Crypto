@@ -25,12 +25,17 @@ def create_mock_df():
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     return df
 
+import pytz
 class MockDatetime(datetime.datetime):
     @classmethod
-    def now(cls):
-        return cls.current_time
+    def now(cls, tz=None):
+        if tz is None:
+            return cls.current_time.replace(tzinfo=None)
+        else:
+            return cls.current_time.replace(tzinfo=pytz.UTC).astimezone(tz)
 
 datetime.datetime = MockDatetime
+binance_testnet_bot.datetime = MockDatetime
 
 def test_binance():
     df = create_mock_df()
@@ -38,6 +43,7 @@ def test_binance():
         os.remove(binance_testnet_bot.STATE_FILE)
 
     binance_testnet_bot.DRY_RUN = True
+    binance_testnet_bot.startup_logged = False
     exchange = MagicMock()
     exchange.fetch_balance.return_value = {'USDT': {'free': 1000.0}}
     exchange.create_market_buy_order.return_value = {'id': 'mock_buy'}
