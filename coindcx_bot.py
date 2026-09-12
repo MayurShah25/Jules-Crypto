@@ -145,9 +145,8 @@ def check_logic(df):
     grid_lines = build_pct_grid(state['start_price'])
     current_grid = state['current_grid_level']
     
-    idx = np.searchsorted(grid_lines, current_price)
-    current_grid_level = grid_lines[idx-1] if idx > 0 else grid_lines[0]
-    current_idx = np.where(grid_lines == current_grid_level)[0][0]
+    # We should use the state's current grid level to determine the indices, not the current price's nearest lower grid
+    current_idx = np.where(np.isclose(grid_lines, current_grid))[0][0]
     
     target_buy_price = grid_lines[current_idx - 1] if current_idx > 0 else grid_lines[0]
     
@@ -203,8 +202,8 @@ def check_logic(df):
         del state['open_grids'][level]
         
     # Process Entries (Buying)
-    lower_line = grid_lines[current_idx - 1]
-    if current_price <= lower_line:
+    lower_line = grid_lines[current_idx - 1] if current_idx > 0 else grid_lines[0]
+    if current_idx > 0 and current_price <= lower_line:
         margin_per_grid = min(MARGIN_RISK_PER_GRID, MAX_POSITION_SIZE_INR)
         
         if state['simulated_balance_inr'] >= margin_per_grid:
