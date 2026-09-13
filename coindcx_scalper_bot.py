@@ -9,6 +9,7 @@ import hmac
 import hashlib
 import base64
 import pytz
+import time
 
 # ==========================================
 # COINDCX PRO FUTURES SCALPING BOT (HIGH FREQUENCY)
@@ -441,8 +442,15 @@ def check_logic(df):
     save_state(state)
 
 if __name__ == "__main__":
-    df = fetch_coindcx_ohlcv()
-    if df is not None and not df.empty:
-        check_logic(df)
-    else:
-        print("Failed to fetch live data from CoinDCX.")
+    print(f"🚀 Starting CoinDCX Scalper Bot for {SYMBOL}...")
+    while True:
+        try:
+            df = fetch_coindcx_ohlcv()
+            if df is not None and not df.empty:
+                check_logic(df)
+            else:
+                print("Failed to fetch live data from CoinDCX.")
+        except Exception as e:
+            print(f"Error in main loop: {e}")
+
+        time.sleep(60) # Wait exactly 1 minute before checking the next candle
