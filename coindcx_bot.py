@@ -15,7 +15,7 @@ import pytz
 # ==========================================
 DRY_RUN = True # Set to False to execute real USDT futures trades
 SYMBOL = 'B-BTC_USDT'
-TIMEFRAME = '1m'
+TIMEFRAME = '1m' # CoinDCX public API only supports [1m, 15m, 1h, 1d]
 LEVERAGE = 3.0
 
 # FUTURES FEE STRUCTURE (Significantly lower than Spot, no TDS on derivatives usually)
@@ -233,14 +233,18 @@ def check_logic(df):
     grid_lines = build_pct_grid(state['start_price'])
     current_grid = state['current_grid_level']
     
-    idx = np.searchsorted(grid_lines, current_price)
-    current_grid_level = grid_lines[idx-1] if idx > 0 else grid_lines[0]
-    current_idx = np.where(grid_lines == current_grid_level)[0][0]
-    
+    # To determine the actual current grid index from the stored state
+    if np.isclose(grid_lines, current_grid).any():
+        current_idx = np.where(np.isclose(grid_lines, current_grid))[0][0]
+    else:
+        idx = np.searchsorted(grid_lines, current_price)
+        current_grid_level = grid_lines[idx-1] if idx > 0 else grid_lines[0]
+        current_idx = np.where(np.isclose(grid_lines, current_grid_level))[0][0]
+
     target_buy_price = grid_lines[current_idx - 1] if current_idx > 0 else grid_lines[0]
     
     print(f"\n--- 🇮🇳 CoinDCX Live Grid Update ({now.strftime('%H:%M:%S')}) ---")
-    print(f"Current Price: ₹{current_price:,.2f} | Target Buy Level: ₹{target_buy_price:,.2f} (-{((current_price - target_buy_price)/current_price)*100:.2f}%)")
+    print(f"Current Price: ${current_price:,.2f} | Target Buy Level: ${target_buy_price:,.2f} (-{((current_price - target_buy_price)/current_price)*100:.2f}%)")
     
     active_longs = {k: v for k, v in state['open_grids'].items() if v['amount'] > 0}
     active_shorts = {k: v for k, v in state.get('open_short_grids', {}).items() if v['amount'] > 0}
