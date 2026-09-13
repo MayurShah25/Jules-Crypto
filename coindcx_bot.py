@@ -22,10 +22,11 @@ LEVERAGE = 3.0
 FEE_RATE = 0.0005  # CoinDCX Futures Taker Fee (~0.05%)
 
 # GRID LOGIC
-GRID_INTERVAL_PCT = 0.01   # Buy/Short every 1% deviation
+GRID_INTERVAL_PCT = 0.025   # Buy/Short every 2.5% deviation to survive strong trends
 MARGIN_RISK_PER_GRID = 50.0 # Spend exactly $50 USDT Margin per grid (position size will be 50 * 3 = $150)
 MAX_POSITION_SIZE_USDT = 500.0
 TRAILING_DISTANCE_PCT = 0.01 # Wait for 1% profit bounce
+STOP_LOSS_PCT = 0.05 # Close position if it goes 5% against us (15% margin loss at 3x)
 
 MAX_HOLD_TIME_MINUTES = 1440 # Relaxed to 24h due to wider grid
 
@@ -267,59 +268,86 @@ def check_logic(df):
     long_levels_to_delete = []
     short_levels_to_delete = []
     
-    # Process Exits (Take Profit) - LONGS
+    # Process Exits (Take Profit & Stop Loss) - LONGS
     for level, data in state['open_grids'].items():
-        if data['amount'] > 0 and data['trailing']:
-            if current_price > data['peak']:
-                data['peak'] = current_price
-                print(f"🚀 Long Peak Price updated to ${current_price:,.2f} for order at ${level:,.2f}")
+        if data['amount'] > 0:
+            trigger_close = False
+            close_reason = ""
+
+            # 1. Stop Loss Check
+            stop_loss_price = float(level) * (1 - STOP_LOSS_PCT)
+            if current_price <= stop_loss_price:
+                trigger_close = True
+                close_reason = "STOP LOSS LONG"
+                print(f"🛑 STOP LOSS HIT for Long at ${level:,.2f}! Price dropped below ${stop_loss_price:,.2f}")
                 
-            trail_stop_price = data['peak'] * (1 - TRAILING_DISTANCE_PCT)
-            if current_price <= trail_stop_price:
-                print(f"🔒 Long Trailing Stop Hit at ${trail_stop_price:,.2f}!")
+            # 2. Take Profit Check
+            elif data['trailing']:
+                if current_price > data['peak']:
+                    data['peak'] = current_price
+                    print(f"🚀 Long Peak Price updated to ${current_price:,.2f} for order at ${level:,.2f}")
+
+                trail_stop_price = data['peak'] * (1 - TRAILING_DISTANCE_PCT)
+                if current_price <= trail_stop_price:
+                    trigger_close = True
+                    close_reason = "TAKE PROFIT LONG"
+                    print(f"🔒 Long Trailing Stop Hit at ${trail_stop_price:,.2f}!")
+
+            if trigger_close:
                 btc_to_sell = data['amount']
-                
-                # To close a long position, we sell
-                success = execute_coindcx_order('sell', current_price, btc_to_sell, "CLOSE LONG")
-                
+                success = execute_coindcx_order('sell', current_price, btc_to_sell, close_reason)
+
                 if success:
                     position_value = btc_to_sell * current_price
                     exchange_fee = position_value * FEE_RATE
-                    net_sell_value = position_value - exchange_fee
 
-                    margin_returned = (btc_to_sell * level) / LEVERAGE
-                    profit = position_value - (btc_to_sell * level)
-                    
+                    margin_returned = (btc_to_sell * float(level)) / LEVERAGE
+                    profit = position_value - (btc_to_sell * float(level))
+
                     state['simulated_balance_usdt'] += (margin_returned + profit - exchange_fee)
-                    
-                    print(f"✅ Executed CLOSE LONG. Net Profit: ${profit - exchange_fee:.2f}")
+
+                    print(f"✅ Executed {close_reason}. Net Profit: ${profit - exchange_fee:.2f}")
                     long_levels_to_delete.append(level)
-                    
-    # Process Exits (Take Profit) - SHORTS
+
+    # Process Exits (Take Profit & Stop Loss) - SHORTS
     for level, data in state.get('open_short_grids', {}).items():
-        if data['amount'] > 0 and data['trailing']:
-            if current_price < data['trough']:
-                data['trough'] = current_price
-                print(f"🚀 Short Trough Price updated to ${current_price:,.2f} for order at ${level:,.2f}")
+        if data['amount'] > 0:
+            trigger_close = False
+            close_reason = ""
 
-            trail_stop_price = data['trough'] * (1 + TRAILING_DISTANCE_PCT)
-            if current_price >= trail_stop_price:
-                print(f"🔒 Short Trailing Stop Hit at ${trail_stop_price:,.2f}!")
+            # 1. Stop Loss Check
+            stop_loss_price = float(level) * (1 + STOP_LOSS_PCT)
+            if current_price >= stop_loss_price:
+                trigger_close = True
+                close_reason = "STOP LOSS SHORT"
+                print(f"🛑 STOP LOSS HIT for Short at ${level:,.2f}! Price surged above ${stop_loss_price:,.2f}")
+
+            # 2. Take Profit Check
+            elif data['trailing']:
+                if current_price < data['trough']:
+                    data['trough'] = current_price
+                    print(f"🚀 Short Trough Price updated to ${current_price:,.2f} for order at ${level:,.2f}")
+
+                trail_stop_price = data['trough'] * (1 + TRAILING_DISTANCE_PCT)
+                if current_price >= trail_stop_price:
+                    trigger_close = True
+                    close_reason = "TAKE PROFIT SHORT"
+                    print(f"🔒 Short Trailing Stop Hit at ${trail_stop_price:,.2f}!")
+
+            if trigger_close:
                 btc_to_buy = data['amount']
+                success = execute_coindcx_order('buy', current_price, btc_to_buy, close_reason)
                 
-                # To close a short position, we buy
-                success = execute_coindcx_order('buy', current_price, btc_to_buy, "CLOSE SHORT")
-
                 if success:
                     position_value = btc_to_buy * current_price
                     exchange_fee = position_value * FEE_RATE
 
-                    margin_returned = (btc_to_buy * level) / LEVERAGE
-                    profit = (btc_to_buy * level) - position_value
+                    margin_returned = (btc_to_buy * float(level)) / LEVERAGE
+                    profit = (btc_to_buy * float(level)) - position_value
 
                     state['simulated_balance_usdt'] += (margin_returned + profit - exchange_fee)
 
-                    print(f"✅ Executed CLOSE SHORT. Net Profit: ${profit - exchange_fee:.2f}")
+                    print(f"✅ Executed {close_reason}. Net Profit: ${profit - exchange_fee:.2f}")
                     short_levels_to_delete.append(level)
 
     for level in long_levels_to_delete:
