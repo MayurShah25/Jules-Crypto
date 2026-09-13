@@ -154,8 +154,8 @@ def check_logic(df):
 
     last_hb = datetime.fromisoformat(state['last_heartbeat'])
 
-    # 4-hour heartbeat
-    if (now_ist - last_hb).total_seconds() >= 14400:
+    # 1-hour heartbeat
+    if (now_ist - last_hb).total_seconds() >= 3600:
         active_grids_count = sum(1 for v in state['open_grids'].values() if v['amount'] > 0)
         unrealized_pnl = 0.0
         for level_str, data in state['open_grids'].items():
