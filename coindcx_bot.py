@@ -3,6 +3,7 @@ import pandas as pd
 import json
 import os
 import numpy as np
+import pandas_ta as ta
 from datetime import datetime
 import hmac
 import hashlib
@@ -62,7 +63,8 @@ def get_coindcx_headers(body=None):
 
 def fetch_coindcx_ohlcv():
     # CoinDCX Public API for klines
-    url = f"https://public.coindcx.com/market_data/candles?pair=I-BTC_INR&interval={TIMEFRAME}"
+    # Fetching 1000 candles to allow for 200 SMA calculation
+    url = f"https://public.coindcx.com/market_data/candles?pair=I-BTC_INR&interval={TIMEFRAME}&limit=1000"
     try:
         response = requests.get(url)
         data = response.json()
@@ -72,7 +74,19 @@ def fetch_coindcx_ohlcv():
         df = df.rename(columns={'time': 'timestamp'})
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df = df.sort_values('timestamp').reset_index(drop=True)
-        return df.tail(5) # Return last 5 candles
+
+        # Calculate technical indicators
+        df['sma_50'] = ta.sma(df['close'], length=50)
+        df['sma_200'] = ta.sma(df['close'], length=200)
+        df['rsi_14'] = ta.rsi(df['close'], length=14)
+
+        adx = ta.adx(df['high'], df['low'], df['close'], length=14)
+        if adx is not None and not adx.empty:
+            df['adx_14'] = adx['ADX_14']
+        else:
+            df['adx_14'] = np.nan
+
+        return df.tail(5) # Return last 5 candles with calculated indicators
     except Exception as e:
         print(f"Error fetching data from CoinDCX: {e}")
         return None
@@ -240,32 +254,48 @@ def check_logic(df):
     for level in levels_to_delete:
         del state['open_grids'][level]
         
+    # Indicators for trend filtering
+    sma_50 = df.iloc[-1].get('sma_50', np.nan)
+    sma_200 = df.iloc[-1].get('sma_200', np.nan)
+    rsi_14 = df.iloc[-1].get('rsi_14', np.nan)
+    adx_14 = df.iloc[-1].get('adx_14', np.nan)
+
+    # Filter Logic: Ranging market OR Uptrend OR Oversold
+    is_ranging = not np.isnan(adx_14) and adx_14 < 25
+    is_uptrend = not np.isnan(sma_50) and not np.isnan(sma_200) and sma_50 > sma_200 and rsi_14 < 70
+    is_oversold = not np.isnan(rsi_14) and rsi_14 < 30
+
+    market_favorable = is_ranging or is_uptrend or is_oversold
+
     # Process Entries (Buying)
     lower_line = grid_lines[current_idx - 1]
     if current_price <= lower_line:
-        margin_per_grid = min(MARGIN_RISK_PER_GRID, MAX_POSITION_SIZE_INR)
-        
-        if state['simulated_balance_inr'] >= margin_per_grid:
-            btc_to_buy = margin_per_grid / lower_line
-            
-            # CoinDCX minimum order is usually ₹100 INR. We check for minimum dust.
-            if margin_per_grid >= 100.0: 
-                print(f"📉 Price dropped to Grid Line ₹{lower_line:,.2f} -> BUYING {btc_to_buy:.5f} BTC")
-                
-                success = execute_coindcx_order('buy', current_price, btc_to_buy, "GRID ENTRY")
-                
-                if success:
-                    # Deduct exchange fee on buy
-                    fee = margin_per_grid * FEE_RATE
-                    state['simulated_balance_inr'] -= (margin_per_grid + fee)
-                    state['simulated_balance_btc'] += btc_to_buy
-                    state['open_grids'][float(lower_line)] = {
-                        'amount': btc_to_buy, 'time': now, 
-                        'trailing': False, 'peak': 0.0
-                    }
-                    state['current_grid_level'] = lower_line
+        if not market_favorable:
+            print(f"⚠️ Price hit buy level ₹{lower_line:,.2f} but skipped due to unfavorable trend (ADX: {adx_14:.1f}, RSI: {rsi_14:.1f}, SMA50>200: {sma_50 > sma_200 if not np.isnan(sma_50) and not np.isnan(sma_200) else False})")
         else:
-            print("❌ Insufficient INR balance to buy.")
+            margin_per_grid = min(MARGIN_RISK_PER_GRID, MAX_POSITION_SIZE_INR)
+            
+            if state['simulated_balance_inr'] >= margin_per_grid:
+                btc_to_buy = margin_per_grid / lower_line
+                
+                # CoinDCX minimum order is usually ₹100 INR. We check for minimum dust.
+                if margin_per_grid >= 100.0:
+                    print(f"📉 Price dropped to Grid Line ₹{lower_line:,.2f} -> BUYING {btc_to_buy:.5f} BTC")
+
+                    success = execute_coindcx_order('buy', current_price, btc_to_buy, "GRID ENTRY")
+
+                    if success:
+                        # Deduct exchange fee on buy
+                        fee = margin_per_grid * FEE_RATE
+                        state['simulated_balance_inr'] -= (margin_per_grid + fee)
+                        state['simulated_balance_btc'] += btc_to_buy
+                        state['open_grids'][float(lower_line)] = {
+                            'amount': btc_to_buy, 'time': now,
+                            'trailing': False, 'peak': 0.0
+                        }
+                        state['current_grid_level'] = lower_line
+            else:
+                print("❌ Insufficient INR balance to buy.")
             
     # Activate Trailing Profit
     elif current_idx + 1 < len(grid_lines):
