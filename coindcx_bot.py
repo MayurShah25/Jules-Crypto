@@ -30,7 +30,21 @@ MAX_HOLD_TIME_MINUTES = 1440 # Relaxed to 24h due to wider grid
 STATE_FILE = 'coindcx_state.json'
 API_KEY = 'YOUR_COINDCX_API_KEY'
 SECRET_KEY = 'YOUR_COINDCX_SECRET_KEY'
+
+# TELEGRAM ALERTS
+TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 # ==========================================
+
+def send_telegram_message(message):
+    if TELEGRAM_BOT_TOKEN == 'YOUR_TELEGRAM_BOT_TOKEN':
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
+    try:
+        requests.post(url, json=payload)
+    except Exception as e:
+        print(f"Failed to send Telegram alert: {e}")
 
 def get_coindcx_headers(body=None):
     secret_bytes = bytes(SECRET_KEY, encoding='utf-8')
@@ -132,7 +146,31 @@ def check_logic(df):
     c_low = df.iloc[-1]['low']
     c_high = df.iloc[-1]['high']
     now = datetime.now()
+    now_ist = datetime.now(pytz.timezone('Asia/Kolkata'))
     
+    # --- HEARTBEAT & FEEDBACK LOGIC ---
+    if 'last_heartbeat' not in state:
+        state['last_heartbeat'] = now_ist.isoformat()
+
+    last_hb = datetime.fromisoformat(state['last_heartbeat'])
+
+    # 4-hour heartbeat
+    if (now_ist - last_hb).total_seconds() >= 14400:
+        active_grids_count = sum(1 for v in state['open_grids'].values() if v['amount'] > 0)
+        unrealized_pnl = 0.0
+        for level_str, data in state['open_grids'].items():
+            if data['amount'] > 0:
+                unrealized_pnl += (current_price - float(level_str)) * data['amount']
+
+        hb_msg = (f"❤️ [CoinDCX BOT HEARTBEAT] - {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}\n"
+                  f"Price: ₹{current_price:,.2f}\n"
+                  f"Active Grids: {active_grids_count}\n"
+                  f"Unrealized PNL: ₹{unrealized_pnl:,.2f}\n"
+                  f"Wallet Balance: ₹{state['simulated_balance_inr']:,.2f}")
+        print(hb_msg)
+        send_telegram_message(hb_msg)
+        state['last_heartbeat'] = now_ist.isoformat()
+
     if state['start_price'] is None:
         state['start_price'] = current_price
         grid_lines = build_pct_grid(current_price)
