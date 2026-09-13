@@ -22,7 +22,7 @@ TDS_RATE = 0.01   # Mandatory 1% TDS on all Sells in India
 # GRID LOGIC (Widened massively to overcome 1.5%+ total decay)
 GRID_INTERVAL_PCT = 0.02   # Buy every 2% drop
 MARGIN_RISK_PER_GRID = 5000.0 # Spend exactly ₹5,000 INR per grid
-MAX_POSITION_SIZE_INR = 50000.0 
+MAX_POSITION_SIZE_INR = 50000.0
 TRAILING_DISTANCE_PCT = 0.015 # Wait for 1.5% profit bounce to overcome taxes
 
 MAX_HOLD_TIME_MINUTES = 1440 # Relaxed to 24h due to wider grid
@@ -107,8 +107,8 @@ def load_state():
     return {
         'start_price': None,
         'current_grid_level': None, 
-        'open_grids': {}, 
-        'simulated_balance_inr': 100000.0, 
+        'open_grids': {},
+        'simulated_balance_inr': 100000.0,
         'simulated_balance_btc': 0.0,
     }
 
@@ -148,7 +148,7 @@ def check_logic(df):
     idx = np.searchsorted(grid_lines, current_price)
     current_grid_level = grid_lines[idx-1] if idx > 0 else grid_lines[0]
     current_idx = np.where(grid_lines == current_grid_level)[0][0]
-    
+
     target_buy_price = grid_lines[current_idx - 1] if current_idx > 0 else grid_lines[0]
     
     print(f"\n--- 🇮🇳 CoinDCX Live Grid Update ({now.strftime('%H:%M:%S')}) ---")
@@ -158,13 +158,13 @@ def check_logic(df):
     print(f"Active Grids Running: {len(active_grids)}")
     for level, data in active_grids.items():
         time_held_mins = (now - data['time']).total_seconds() / 60.0
-        
+
         if data['trailing']:
             trail_stop = data['peak'] * (1 - TRAILING_DISTANCE_PCT)
             tp_status = f"Trailing Stop Active @ ₹{trail_stop:,.2f} (Peak: ₹{data['peak']:,.2f})"
         else:
             tp_status = f"Waiting for ₹{(level * (1 + TRAILING_DISTANCE_PCT)):,.2f} activation..."
-            
+
         print(f"  -> Entry: ₹{level:,.2f} | Time Held: {time_held_mins:.1f}m | TP: {tp_status}")
     
     levels_to_delete = []
@@ -180,25 +180,25 @@ def check_logic(df):
             if current_price <= trail_stop_price:
                 print(f"🔒 Trailing Stop Hit at ₹{trail_stop_price:,.2f}!")
                 btc_to_sell = data['amount']
-                
+
                 success = execute_coindcx_order('sell', current_price, btc_to_sell, "TAKE PROFIT")
                 
                 if success:
-                    gross_sell_value = btc_to_sell * current_price 
-                    
+                    gross_sell_value = btc_to_sell * current_price
+
                     # INDIAN TAX DEDUCTIONS
                     exchange_fee = gross_sell_value * FEE_RATE
                     tds_tax = gross_sell_value * TDS_RATE
                     net_sell_value = gross_sell_value - exchange_fee - tds_tax
-                    
+
                     state['simulated_balance_btc'] -= btc_to_sell
                     state['simulated_balance_inr'] += net_sell_value
-                    
+
                     buy_cost = data['amount'] * level
                     net_profit = net_sell_value - buy_cost
                     print(f"✅ Executed TRAIL SELL. Net Profit (After TDS & Fees): ₹{net_profit:.2f}")
                     levels_to_delete.append(level)
-                
+
     for level in levels_to_delete:
         del state['open_grids'][level]
         
@@ -206,14 +206,14 @@ def check_logic(df):
     lower_line = grid_lines[current_idx - 1]
     if current_price <= lower_line:
         margin_per_grid = min(MARGIN_RISK_PER_GRID, MAX_POSITION_SIZE_INR)
-        
+
         if state['simulated_balance_inr'] >= margin_per_grid:
             btc_to_buy = margin_per_grid / lower_line
-            
+
             # CoinDCX minimum order is usually ₹100 INR. We check for minimum dust.
-            if margin_per_grid >= 100.0: 
+            if margin_per_grid >= 100.0:
                 print(f"📉 Price dropped to Grid Line ₹{lower_line:,.2f} -> BUYING {btc_to_buy:.5f} BTC")
-                
+
                 success = execute_coindcx_order('buy', current_price, btc_to_buy, "GRID ENTRY")
                 
                 if success:
@@ -222,13 +222,13 @@ def check_logic(df):
                     state['simulated_balance_inr'] -= (margin_per_grid + fee)
                     state['simulated_balance_btc'] += btc_to_buy
                     state['open_grids'][float(lower_line)] = {
-                        'amount': btc_to_buy, 'time': now, 
+                        'amount': btc_to_buy, 'time': now,
                         'trailing': False, 'peak': 0.0
                     }
                     state['current_grid_level'] = lower_line
         else:
             print("❌ Insufficient INR balance to buy.")
-            
+
     # Activate Trailing Profit
     elif current_idx + 1 < len(grid_lines):
         higher_line = grid_lines[current_idx + 1]
