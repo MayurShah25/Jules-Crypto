@@ -26,12 +26,12 @@ GRID_STOP_LOSS_PCT = 0.015
 DAILY_LOSS_LIMIT_PCT = 0.15 # Stop trading if we lose 15% today
 
 STATE_FILE = 'binance_testnet_state.json'
-API_KEY = '55zZJTiycSGGtzfcVVCDHzn2cqFRx1SVzpb3WAWkKLHuccRsT56ERe75awTcfWIM' # Get from testnet.binancefuture.com
-SECRET_KEY = 'WyGFiNAqlEQamT7ttsN9CQuioPo4yH9AkGW2gOZ9av56mPw5L82FTtCZt29j4GXH'
+API_KEY = 'YOUR_BINANCE_API_KEY' # Get from testnet.binancefuture.com
+SECRET_KEY = 'YOUR_BINANCE_SECRET_KEY'
 
 # TELEGRAM ALERTS
-TELEGRAM_BOT_TOKEN = '8710147171:AAGSlfHMLB04i9kuvm2h5vU_DjHo0gWMOio'
-TELEGRAM_CHAT_ID = '1499793115'
+TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
+TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 # ==========================================
 
 def send_telegram_message(message):
