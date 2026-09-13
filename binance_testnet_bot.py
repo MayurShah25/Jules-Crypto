@@ -31,7 +31,7 @@ SECRET_KEY = 'YOUR_BINANCE_SECRET_KEY'
 
 # TELEGRAM ALERTS
 TELEGRAM_BOT_TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
-TELEGRAM_CHAT_ID = 'YOUR_TELEGRAM_CHAT_ID'
+TELEGRAM_CHAT_ID = 'TELEGRAM_CHAT_ID'
 # ==========================================
 
 def send_telegram_message(message):
