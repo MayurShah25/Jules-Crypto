@@ -3,7 +3,6 @@ import pandas as pd
 import json
 import os
 import numpy as np
-import pandas_ta as ta
 from datetime import datetime
 import hmac
 import hashlib
@@ -78,10 +77,17 @@ def fetch_coindcx_ohlcv():
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df = df.sort_values('timestamp').reset_index(drop=True)
 
-        # Calculate fast technical indicators for scalper
-        df['ema_9'] = ta.ema(df['close'], length=9)
-        df['ema_21'] = ta.ema(df['close'], length=21)
-        df['rsi_7'] = ta.rsi(df['close'], length=7)
+        def calc_rsi(series, length):
+            delta = series.diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=length, min_periods=1).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=length, min_periods=1).mean()
+            rs = gain / loss
+            return 100 - (100 / (1 + rs))
+
+        # Calculate fast technical indicators for scalper using pure pandas
+        df['ema_9'] = df['close'].ewm(span=9, adjust=False).mean()
+        df['ema_21'] = df['close'].ewm(span=21, adjust=False).mean()
+        df['rsi_7'] = calc_rsi(df['close'], 7)
 
         return df.tail(5) # Return last 5 candles with calculated indicators
     except Exception as e:
